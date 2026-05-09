@@ -27,7 +27,10 @@ const SETTINGS = {
   MAX_HP: 5,              // 플레이어 최대 체력
   MAX_AMMO: 10,           // 한 탄창에 들어가는 탄약 수
   RELOAD_TIME: 150,       // 재장전 완료까지 걸리는 프레임 (약 2.5초)
-  NORMAL_FONT_COLOR: 'rgba(0, 0, 0, 0.6)' // 기본 UI 텍스트 투명도 및 색상
+  NORMAL_FONT_COLOR: 'rgba(0, 0, 0, 0.6)', // 기본 UI 텍스트 투명도 및 색상
+  DASH_COOLDOWN: 180,     // 대시 쿨타임 (약 3초)
+  DASH_SPEED_MULTIPLIER: 3, // 대시 시 속도 배율
+  DASH_DURATION: 12       // 대시 지속 프레임
 };
 
 // FPS 고정
@@ -41,7 +44,7 @@ let lastTime = 0;
 function resizeCanvas() {
   canvas.width = window.innerWidth;
   canvas.height = window.innerHeight;
-  
+
   // 크기가 바뀔 때마다 플레이어 위치가 화면 밖으로 나가지 않게 보정하고 싶다면 
   // 여기에 위치 재계산 로직을 추가할 수 있습니다.
 }
@@ -73,7 +76,7 @@ function drawStartScreen() {
 
   ctx.fillStyle = "white";
   ctx.textAlign = "center";
-  
+
   if (blink) {
     ctx.font = "60px Arial";
     ctx.fillText("Press Any Key", canvas.width / 2, canvas.height / 2);
@@ -86,7 +89,7 @@ function drawStartScreen() {
 function drawGameOver() {
   ctx.fillStyle = SETTINGS.NORMAL_FONT_COLOR;
   ctx.fillRect(0, 0, canvas.width, canvas.height);
-  
+
   ctx.fillStyle = "white";
   ctx.font = "60px Arial";
   ctx.textAlign = "center";
@@ -99,14 +102,14 @@ function drawGameOver() {
 // 상단 정보 창 (조작법, 탄약 상태, 재장전 안내)
 function drawUI() {
   ctx.fillStyle = SETTINGS.NORMAL_FONT_COLOR;
-  
+
   // Player 1 UI (좌측 상단)
   ctx.textAlign = "left";
   ctx.font = "bold 18px Arial";
   ctx.fillText("P1 (Blue)", 20, 30);
   ctx.font = "14px Arial";
   ctx.fillText("Move: W, A, S, D | Shoot: F | Reload: R", 20, 55);
-  
+
   ctx.font = "bold 16px Arial";
   // 재장전 중일 때는 주황색으로 상태 표시
   ctx.fillStyle = p1.isReloading ? "orange" : SETTINGS.NORMAL_FONT_COLOR;
@@ -119,7 +122,7 @@ function drawUI() {
   ctx.fillText("P2 (Red)", canvas.width - 20, 30);
   ctx.font = "14px Arial";
   ctx.fillText("Move: I, J, K, L | Shoot: ; | Reload: P", canvas.width - 20, 55);
-  
+
   ctx.font = "bold 16px Arial";
   ctx.fillStyle = p2.isReloading ? "orange" : SETTINGS.NORMAL_FONT_COLOR;
   ctx.fillText(`Ammo: ${p2.isReloading ? "RELOADING..." : p2.ammo + " / " + SETTINGS.MAX_AMMO}`, canvas.width - 20, 80);
@@ -130,12 +133,16 @@ function resetGame() {
   p1.x = canvas.width * 0.1; p1.y = canvas.height * 0.6; // 화면 왼쪽에서 10% 지점, 밑에서 40% 지점
   p1.vx = 0; p1.vy = 0;
   p1.hp = SETTINGS.MAX_HP; p1.ammo = SETTINGS.MAX_AMMO; p1.isReloading = false;
-  
+  p1.dashCooldown = 0; p1.dashTimer = 0;
+
   p2.x = canvas.width * 0.9; p2.y = canvas.height * 0.4; // 화면 오른쪽에서 10% 지점, 위에서 40% 지점
   p2.vx = 0; p2.vy = 0;
   p2.hp = SETTINGS.MAX_HP; p2.ammo = SETTINGS.MAX_AMMO; p2.isReloading = false;
+  p2.dashCooldown = 0; p2.dashTimer = 0;
 
   bullets.length = 0; // 화면상의 모든 총알 제거
+  particles.length = 0; // 파티클 초기화
+  if (typeof initObstacles === 'function') initObstacles(); // 장애물 초기화
   currentState = GAME_STATE.START;
   winner = null;
 }
@@ -151,6 +158,27 @@ function isColliding(a, b) {
   const dx = a.x - b.x;
   const dy = a.y - b.y;
   return Math.hypot(dx, dy) < ((a.radius * scale) + (b.radius * scale));
+}
+
+// 원형 객체(플레이어/총알)와 직사각형 객체(장애물) 사이의 충돌 여부 확인
+function isCollidingRect(circle, rect) {
+  const scale = getScale();
+  const scaledRadius = circle.radius * scale;
+
+  let testX = circle.x;
+  let testY = circle.y;
+
+  if (circle.x < rect.x) testX = rect.x;
+  else if (circle.x > rect.x + rect.width) testX = rect.x + rect.width;
+
+  if (circle.y < rect.y) testY = rect.y;
+  else if (circle.y > rect.y + rect.height) testY = rect.y + rect.height;
+
+  const distX = circle.x - testX;
+  const distY = circle.y - testY;
+  const distance = Math.sqrt((distX * distX) + (distY * distY));
+
+  return distance <= scaledRadius;
 }
 
 // 피격 시 플레이어의 색상을 순간적으로 반전시키는 기능
@@ -206,7 +234,7 @@ class GameObject {
   draw(ctx) {
     const scale = getScale();
     let c = this.hitTimer > 0 ? invertColor(this.color) : this.color;
-    
+
     ctx.fillStyle = `rgb(${c.r}, ${c.g}, ${c.b})`;
     ctx.beginPath();
     // 반지름(radius)에 배율을 적용하여 모니터 크기에 따라 캐릭터 크기가 조절되게 합니다.
@@ -224,18 +252,36 @@ class Player extends GameObject {
     this.hp = SETTINGS.MAX_HP;
     this.cooldown = 0;                // 발사 대기 시간 타이머
     this.hitTimer = 0;                // 피격 이펙트 타이머
-    
+
     // 탄창 시스템 관련 속성
     this.ammo = SETTINGS.MAX_AMMO;
     this.reloadTimer = 0;
     this.isReloading = false;
+
+    // 대시 시스템 관련 속성
+    this.dashCooldown = 0;
+    this.dashTimer = 0;
   }
 
   // 키 입력에 따른 가속도 및 방향 설정
   handleInput(keys) {
     let dx = 0; let dy = 0;
     const scale = getScale(); // 현재 화면 배율 가져오기
-    
+
+    if (keys[this.controls.dash] && this.dashCooldown <= 0) {
+      this.dashTimer = SETTINGS.DASH_DURATION;
+      this.dashCooldown = SETTINGS.DASH_COOLDOWN;
+    }
+
+    if (this.dashTimer > 0) {
+      const dashSpeed = this.maxSpeed * SETTINGS.DASH_SPEED_MULTIPLIER * scale;
+      let dirX = this.dir.x || 1;
+      let dirY = this.dir.y || 0;
+      this.vx = dirX * dashSpeed;
+      this.vy = dirY * dashSpeed;
+      return; // 대시 중에는 일반 이동 무시
+    }
+
     // 재장전 중이면 속도를 절반으로 줄임
     // 2026.04.29, 속도를 반응형으로 변경함
     const currentAccel = (this.isReloading ? this.accel * SETTINGS.RELOAD_SPEED_MULTIPLIER : this.accel) * scale;
@@ -266,11 +312,11 @@ class Player extends GameObject {
     if (this.ammo > 0) {
       this.ammo--;
       this.cooldown = SETTINGS.SHOOT_COOLDOWN;
-      
+
       bullets.push(new Bullet(
-        this.x, this.y, 
-        this.dir.x * SETTINGS.BULLET_SPEED * scale, 
-        this.dir.y * SETTINGS.BULLET_SPEED * scale, 
+        this.x, this.y,
+        this.dir.x * SETTINGS.BULLET_SPEED * scale,
+        this.dir.y * SETTINGS.BULLET_SPEED * scale,
         this.color, this
       ));
 
@@ -292,9 +338,14 @@ class Player extends GameObject {
   // 플레이어 전용 업데이트 (물리 + 각종 타이머)
   update(canvasWidth, canvasHeight) {
     super.update(canvasWidth, canvasHeight);
-    
+
     if (this.cooldown > 0) this.cooldown--;
     if (this.hitTimer > 0) this.hitTimer--;
+    if (this.dashCooldown > 0) this.dashCooldown--;
+    if (this.dashTimer > 0) {
+      this.dashTimer--;
+      this.hitTimer = 2; // 대시 중 시각적 무적/잔상 효과
+    }
 
     // 재장전 시간 카운트다운
     if (this.isReloading) {
@@ -314,7 +365,7 @@ class Player extends GameObject {
     const barHeight = 6;
     const spacing = 3;
     const totalBarWidth = (barWidth * SETTINGS.MAX_HP) + (spacing * (SETTINGS.MAX_HP - 1));
-    
+
     let startX = this.x - (totalBarWidth / 2);
     let startY = this.y - this.radius - 20;
 
@@ -329,12 +380,20 @@ class Player extends GameObject {
       }
     }
 
+    // 대시 쿨타임 바 그리기
+    let dashBarY = startY + barHeight + 4;
+    ctx.fillStyle = "rgba(100, 100, 100, 0.5)";
+    ctx.fillRect(startX, dashBarY, totalBarWidth, 4);
+    let dashRatio = 1 - (this.dashCooldown / SETTINGS.DASH_COOLDOWN);
+    ctx.fillStyle = "yellow";
+    ctx.fillRect(startX, dashBarY, totalBarWidth * dashRatio, 4);
+
     // 조준기(삼각형) 그리기
     const triangleSize = 8;     // 삼각형의 크기 (높이)
     const offsetFromPlayer = this.radius + 10; // 플레이어 중심에서 삼각형까지의 거리
 
     // 플레이어의 고유 색상을 반투명하게 사용
-    ctx.fillStyle = `rgba(${this.color.r}, ${this.color.g}, ${this.color.b}, 0.7)`; 
+    ctx.fillStyle = `rgba(${this.color.r}, ${this.color.g}, ${this.color.b}, 0.7)`;
 
     // 현재 바라보는 방향(this.dir)의 라디안 각도 계산
     const angle = Math.atan2(this.dir.y, this.dir.x);
@@ -350,11 +409,11 @@ class Player extends GameObject {
     // 정면(오른쪽 방향)으로 offsetFromPlayer 만큼 떨어진 곳에 삼각형을 그리면 됩니다.
     ctx.beginPath();
     // 삼각형의 정점 (조준 방향 끝)
-    ctx.moveTo(offsetFromPlayer + triangleSize, 0); 
+    ctx.moveTo(offsetFromPlayer + triangleSize, 0);
     // 왼쪽 아래 점
-    ctx.lineTo(offsetFromPlayer, -triangleSize / 2); 
+    ctx.lineTo(offsetFromPlayer, -triangleSize / 2);
     // 오른쪽 아래 점
-    ctx.lineTo(offsetFromPlayer, triangleSize / 2); 
+    ctx.lineTo(offsetFromPlayer, triangleSize / 2);
     ctx.fill(); // 채우기
     ctx.closePath();
 
@@ -385,19 +444,87 @@ class Bullet extends GameObject {
 }
 
 /* =========================================================================
+   [장애물 & 파티클 클래스]
+========================================================================= */
+class Obstacle {
+  constructor(xRatio, yRatio, wRatio, hRatio, color) {
+    this.xRatio = xRatio; this.yRatio = yRatio;
+    this.wRatio = wRatio; this.hRatio = hRatio;
+    this.color = color;
+    this.x = 0; this.y = 0; this.width = 0; this.height = 0;
+  }
+
+  update(canvasWidth, canvasHeight) {
+    this.x = canvasWidth * this.xRatio;
+    this.y = canvasHeight * this.yRatio;
+    this.width = canvasWidth * this.wRatio;
+    this.height = canvasHeight * this.hRatio;
+  }
+
+  draw(ctx) {
+    ctx.fillStyle = this.color;
+    ctx.fillRect(this.x, this.y, this.width, this.height);
+    // 간단한 입체감(테두리) 부여
+    ctx.strokeStyle = "#444";
+    ctx.lineWidth = 3;
+    ctx.strokeRect(this.x, this.y, this.width, this.height);
+  }
+}
+
+class Particle extends GameObject {
+  constructor(x, y, color) {
+    super(x, y, color);
+    this.radius = Math.random() * 3 + 2;
+    this.vx = (Math.random() - 0.5) * 15;
+    this.vy = (Math.random() - 0.5) * 15;
+    this.life = 20;
+    this.friction = 0.85;
+  }
+
+  update(canvasWidth, canvasHeight) {
+    super.update(canvasWidth, canvasHeight);
+    this.life--;
+  }
+
+  draw(ctx) {
+    if (this.life <= 0) return;
+    const scale = getScale();
+    const alpha = Math.max(0, this.life / 20);
+    ctx.fillStyle = `rgba(${this.color.r}, ${this.color.g}, ${this.color.b}, ${alpha})`;
+    ctx.beginPath();
+    ctx.arc(this.x, this.y, this.radius * scale, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.closePath();
+  }
+}
+
+/* =========================================================================
    [인스턴스 생성 및 데이터 배열 초기화]
 ========================================================================= */
 const keys = {};     // 현재 눌려있는 키 상태를 저장하는 객체
 const bullets = [];   // 화면에 존재하는 모든 총알 인스턴스 저장 배열
+const particles = [];
+const obstacles = [];
 
-// Player 1 설정 (파란색, WASD & F, 수동재장전 R)
+// 장애물 맵 중앙 십자가/대칭 배치
+function initObstacles() {
+  obstacles.length = 0;
+  // 중앙 기둥
+  obstacles.push(new Obstacle(0.48, 0.35, 0.04, 0.3, "gray"));
+  // 좌우 블록
+  obstacles.push(new Obstacle(0.3, 0.45, 0.05, 0.1, "gray"));
+  obstacles.push(new Obstacle(0.65, 0.45, 0.05, 0.1, "gray"));
+}
+initObstacles();
+
+// Player 1 설정 (파란색, WASD & F, 수동재장전 R, 대시 Shift)
 const p1 = new Player(canvas.width * 0.1, canvas.height * 0.6, { r: 0, g: 0, b: 255 }, {
-  up: 'w', down: 's', left: 'a', right: 'd', shoot: 'f', reload: 'r'
+  up: 'w', down: 's', left: 'a', right: 'd', shoot: 'f', reload: 'r', dash: 'shift'
 });
 
-// Player 2 설정 (빨간색, IJKL & ;, 수동재장전 P)
+// Player 2 설정 (빨간색, IJKL & ;, 수동재장전 P, 대시 Enter)
 const p2 = new Player(canvas.width * 0.9, canvas.height * 0.4, { r: 255, g: 0, b: 0 }, {
-  up: 'i', down: 'k', left: 'j', right: 'l', shoot: ';', reload: 'p'
+  up: 'i', down: 'k', left: 'j', right: 'l', shoot: ';', reload: 'p', dash: 'enter'
 });
 
 /* =========================================================================
@@ -426,12 +553,35 @@ function gameLoop(timestamp) {
 
       // 3. 게임 플레이 로직
       if (currentState === GAME_STATE.PLAYING) {
-        // 플레이어 이동 업데이트
-        p1.handleInput(keys);
-        p1.update(canvas.width, canvas.height);
+        // 장애물 업데이트
+        obstacles.forEach(obs => obs.update(canvas.width, canvas.height));
 
-        p2.handleInput(keys);
-        p2.update(canvas.width, canvas.height);
+        // 플레이어 이동 업데이트 및 장애물 충돌 처리
+        [p1, p2].forEach(p => {
+          let oldX = p.x; let oldY = p.y;
+          p.handleInput(keys);
+          p.update(canvas.width, canvas.height);
+
+          obstacles.forEach(obs => {
+            if (isCollidingRect(p, obs)) {
+              // 단순화된 충돌 밀어내기 (X축 먼저)
+              let dummyX = { x: p.x - p.vx, y: p.y, radius: p.radius };
+              if (!isCollidingRect(dummyX, obs)) { p.x -= p.vx; p.vx = 0; }
+              else {
+                let dummyY = { x: p.x, y: p.y - p.vy, radius: p.radius };
+                if (!isCollidingRect(dummyY, obs)) { p.y -= p.vy; p.vy = 0; }
+                else { p.x = oldX; p.y = oldY; p.vx = 0; p.vy = 0; }
+              }
+            }
+          });
+        });
+
+        // 파티클 업데이트
+        for (let i = particles.length - 1; i >= 0; i--) {
+          const p = particles[i];
+          p.update(canvas.width, canvas.height);
+          if (p.life <= 0) particles.splice(i, 1);
+        }
 
         // 공격 처리 (키를 누르고 있으면 shoot 메서드 반복 호출)
         if (keys[p1.controls.shoot]) p1.shoot(bullets);
@@ -452,6 +602,19 @@ function gameLoop(timestamp) {
             continue;
           }
 
+          let hitObstacle = false;
+          // 장애물 충돌 판정
+          for (const obs of obstacles) {
+            if (isCollidingRect(b, obs)) {
+              // 파티클 생성
+              for (let k = 0; k < 6; k++) particles.push(new Particle(b.x, b.y, b.color));
+              bullets.splice(i, 1);
+              hitObstacle = true;
+              break;
+            }
+          }
+          if (hitObstacle) continue;
+
           // 상대 플레이어와의 충돌 판정
           for (const player of [p1, p2]) {
             if (b.owner === player) continue; // 자신이 쏜 총알은 무시
@@ -462,7 +625,10 @@ function gameLoop(timestamp) {
               player.vx += b.vx * 0.4 * scale;    // 피격 시 넉백 효과 적용
               player.vy += b.vy * 0.4 * scale;
               player.hitTimer = 10;       // 색상 반전 이펙트 활성화
-              
+
+              // 파티클 생성
+              for (let k = 0; k < 12; k++) particles.push(new Particle(b.x, b.y, b.color));
+
               bullets.splice(i, 1);       // 충돌한 총알 제거
               break;
             }
@@ -476,9 +642,11 @@ function gameLoop(timestamp) {
         }
       }
 
-      // 4. 객체 렌더링 순서 (플레이어 -> 총알 -> UI)
+      // 4. 객체 렌더링 순서 (배경/장애물 -> 플레이어 -> 파티클 -> 총알 -> UI)
+      obstacles.forEach(obs => obs.draw(ctx));
       p1.draw(ctx);
       p2.draw(ctx);
+      particles.forEach(p => p.draw(ctx));
       bullets.forEach(b => b.draw(ctx));
       drawUI();
 
@@ -518,7 +686,7 @@ window.addEventListener('keydown', e => {
 // 키에서 손을 뗐을 때 실행
 window.addEventListener('keyup', e => {
   const key = e.key.toLowerCase();
-  keys[key] = false; 
+  keys[key] = false;
 });
 
 // 모든 준비가 끝나면 루프 시작
