@@ -108,7 +108,7 @@ function drawUI() {
   ctx.font = "bold 18px Arial";
   ctx.fillText("P1 (Blue)", 20, 30);
   ctx.font = "14px Arial";
-  ctx.fillText("Move: W, A, S, D | Shoot: F | Reload: R", 20, 55);
+  ctx.fillText("Move: W, A, S, D | Shoot: F | Reload: R | Dash : Shift", 20, 55);
 
   ctx.font = "bold 16px Arial";
   // 재장전 중일 때는 주황색으로 상태 표시
@@ -121,7 +121,7 @@ function drawUI() {
   ctx.font = "bold 18px Arial";
   ctx.fillText("P2 (Red)", canvas.width - 20, 30);
   ctx.font = "14px Arial";
-  ctx.fillText("Move: I, J, K, L | Shoot: ; | Reload: P", canvas.width - 20, 55);
+  ctx.fillText("Move: I, J, K, L | Shoot: ; | Reload: P | Dash : Enter", canvas.width - 20, 55);
 
   ctx.font = "bold 16px Arial";
   ctx.fillStyle = p2.isReloading ? "orange" : SETTINGS.NORMAL_FONT_COLOR;
