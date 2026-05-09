@@ -13,7 +13,8 @@ Player 1 (Blue)
 
 이동 (Move): W, A, S, D
 발사 (Shoot): F
-재장전 (Reload): V
+재장전 (Reload): R
+대쉬 (Dash): Shift
 
 
 Player 2 (Red)
@@ -21,7 +22,7 @@ Player 2 (Red)
 이동 (Move): I, J, K, L
 발사 (Shoot): ; (세미콜론)
 재장전 (Reload): P
-
+대쉬 (Dash): Enter
 
 공통 (Common)
 
