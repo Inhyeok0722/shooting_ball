@@ -134,15 +134,17 @@ function resetGame() {
   p1.vx = 0; p1.vy = 0;
   p1.hp = SETTINGS.MAX_HP; p1.ammo = SETTINGS.MAX_AMMO; p1.isReloading = false;
   p1.dashCooldown = 0; p1.dashTimer = 0;
-
+  p1.stunTimer = 0; p1.healTimer = 0;
+  
   p2.x = canvas.width * 0.9; p2.y = canvas.height * 0.4; // 화면 오른쪽에서 10% 지점, 위에서 40% 지점
   p2.vx = 0; p2.vy = 0;
   p2.hp = SETTINGS.MAX_HP; p2.ammo = SETTINGS.MAX_AMMO; p2.isReloading = false;
   p2.dashCooldown = 0; p2.dashTimer = 0;
+  p2.stunTimer = 0; p2.healTimer = 0;
 
   bullets.length = 0; // 화면상의 모든 총알 제거
   particles.length = 0; // 파티클 초기화
-  if (typeof initObstacles === 'function') initObstacles(); // 장애물 초기화
+  if (typeof initMapElements === 'function') initMapElements(); // 맵 요소 초기화
   currentState = GAME_STATE.START;
   winner = null;
 }
@@ -261,6 +263,10 @@ class Player extends GameObject {
     // 대시 시스템 관련 속성
     this.dashCooldown = 0;
     this.dashTimer = 0;
+
+    // 전술 시스템 관련 속성
+    this.stunTimer = 0;
+    this.healTimer = 0;
   }
 
   // 키 입력에 따른 가속도 및 방향 설정
@@ -284,8 +290,17 @@ class Player extends GameObject {
 
     // 재장전 중이면 속도를 절반으로 줄임
     // 2026.04.29, 속도를 반응형으로 변경함
-    const currentAccel = (this.isReloading ? this.accel * SETTINGS.RELOAD_SPEED_MULTIPLIER : this.accel) * scale;
-    const currentMaxSpeed = (this.isReloading ? this.maxSpeed * SETTINGS.RELOAD_SPEED_MULTIPLIER : this.maxSpeed) * scale;
+    let accelMult = this.isReloading ? SETTINGS.RELOAD_SPEED_MULTIPLIER : 1;
+    let speedMult = this.isReloading ? SETTINGS.RELOAD_SPEED_MULTIPLIER : 1;
+    
+    // 피격 경직 상태면 속도 대폭 감소 (30%)
+    if (this.stunTimer > 0) {
+      accelMult *= 0.3;
+      speedMult *= 0.3;
+    }
+
+    const currentAccel = this.accel * accelMult * scale;
+    const currentMaxSpeed = this.maxSpeed * speedMult * scale;
 
     if (keys[this.controls.up]) { this.vy -= currentAccel; dy -= 1; }
     if (keys[this.controls.down]) { this.vy += currentAccel; dy += 1; }
@@ -346,6 +361,7 @@ class Player extends GameObject {
       this.dashTimer--;
       this.hitTimer = 2; // 대시 중 시각적 무적/잔상 효과
     }
+    if (this.stunTimer > 0) this.stunTimer--;
 
     // 재장전 시간 카운트다운
     if (this.isReloading) {
@@ -447,10 +463,12 @@ class Bullet extends GameObject {
    [장애물 & 파티클 클래스]
 ========================================================================= */
 class Obstacle {
-  constructor(xRatio, yRatio, wRatio, hRatio, color) {
+  constructor(xRatio, yRatio, wRatio, hRatio, color, maxHp = 10) {
     this.xRatio = xRatio; this.yRatio = yRatio;
     this.wRatio = wRatio; this.hRatio = hRatio;
     this.color = color;
+    this.maxHp = maxHp;
+    this.hp = maxHp;
     this.x = 0; this.y = 0; this.width = 0; this.height = 0;
   }
 
@@ -462,12 +480,60 @@ class Obstacle {
   }
 
   draw(ctx) {
+    ctx.globalAlpha = Math.max(0.2, this.hp / this.maxHp); // 체력에 따라 투명해짐
     ctx.fillStyle = this.color;
     ctx.fillRect(this.x, this.y, this.width, this.height);
-    // 간단한 입체감(테두리) 부여
+    
+    // 남은 체력 게이지 (벽 중앙)
+    ctx.fillStyle = "rgba(0,0,0,0.5)";
+    ctx.fillRect(this.x + 5, this.y + this.height / 2 - 2, this.width - 10, 4);
+    ctx.fillStyle = "white";
+    ctx.fillRect(this.x + 5, this.y + this.height / 2 - 2, (this.width - 10) * (this.hp / this.maxHp), 4);
+    
     ctx.strokeStyle = "#444";
     ctx.lineWidth = 3;
     ctx.strokeRect(this.x, this.y, this.width, this.height);
+    ctx.globalAlpha = 1.0;
+  }
+}
+
+class HealingZone {
+  constructor(xRatio, yRatio) {
+    this.xRatio = xRatio;
+    this.yRatio = yRatio;
+    this.x = 0; this.y = 0; this.radius = 0;
+    this.pulse = 0;
+  }
+
+  update(canvasWidth, canvasHeight) {
+    this.x = canvasWidth * this.xRatio;
+    this.y = canvasHeight * this.yRatio;
+    const scale = getScale();
+    this.radius = 100 * scale; // 스케일 반영된 고정 크기 (화면 비율로 약 100px)
+    this.pulse += 0.05;
+  }
+
+  draw(ctx) {
+    const alpha = 0.2 + Math.sin(this.pulse) * 0.1;
+    ctx.fillStyle = `rgba(0, 255, 100, ${alpha})`;
+    ctx.beginPath();
+    ctx.arc(this.x, this.y, this.radius, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.closePath();
+    
+    ctx.strokeStyle = "rgba(0, 200, 50, 0.5)";
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.arc(this.x, this.y, this.radius, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.closePath();
+    
+    // 중앙에 + 표시
+    ctx.fillStyle = "rgba(0, 255, 100, 0.8)";
+    ctx.font = `bold ${20 * getScale()}px Arial`;
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    ctx.fillText("+", this.x, this.y);
   }
 }
 
@@ -505,17 +571,19 @@ const keys = {};     // 현재 눌려있는 키 상태를 저장하는 객체
 const bullets = [];   // 화면에 존재하는 모든 총알 인스턴스 저장 배열
 const particles = [];
 const obstacles = [];
+const healingZones = [];
 
-// 장애물 맵 중앙 십자가/대칭 배치
-function initObstacles() {
+// 장애물 및 거점 배치
+function initMapElements() {
   obstacles.length = 0;
-  // 중앙 기둥
-  obstacles.push(new Obstacle(0.48, 0.35, 0.04, 0.3, "gray"));
-  // 좌우 블록
-  obstacles.push(new Obstacle(0.3, 0.45, 0.05, 0.1, "gray"));
-  obstacles.push(new Obstacle(0.65, 0.45, 0.05, 0.1, "gray"));
+  healingZones.length = 0;
+  // 중앙 힐링존
+  healingZones.push(new HealingZone(0.5, 0.5));
+  // 좌우 블록 (힐링존 보호용 벽)
+  obstacles.push(new Obstacle(0.35, 0.4, 0.03, 0.2, "gray", 15));
+  obstacles.push(new Obstacle(0.62, 0.4, 0.03, 0.2, "gray", 15));
 }
-initObstacles();
+initMapElements();
 
 // Player 1 설정 (파란색, WASD & F, 수동재장전 R, 대시 Shift)
 const p1 = new Player(canvas.width * 0.1, canvas.height * 0.6, { r: 0, g: 0, b: 255 }, {
@@ -553,8 +621,32 @@ function gameLoop(timestamp) {
 
       // 3. 게임 플레이 로직
       if (currentState === GAME_STATE.PLAYING) {
-        // 장애물 업데이트
+        // 맵 요소 업데이트
         obstacles.forEach(obs => obs.update(canvas.width, canvas.height));
+        healingZones.forEach(hz => hz.update(canvas.width, canvas.height));
+
+        // 회복 거점 로직
+        [p1, p2].forEach(p => {
+          let isHealing = false;
+          healingZones.forEach(hz => {
+            const dx = p.x - hz.x; const dy = p.y - hz.y;
+            if (Math.hypot(dx, dy) < hz.radius + (p.radius * getScale())) {
+              isHealing = true;
+            }
+          });
+          
+          if (isHealing && p.hp < SETTINGS.MAX_HP) {
+            p.healTimer++;
+            if (p.healTimer >= 120) { // 약 2초 머물면 1 회복
+              p.hp++;
+              p.healTimer = 0;
+              // 힐링 이펙트
+              for(let i=0; i<8; i++) particles.push(new Particle(p.x, p.y, {r:0, g:255, b:100}));
+            }
+          } else {
+            p.healTimer = 0; // 벗어나면 초기화
+          }
+        });
 
         // 플레이어 이동 업데이트 및 장애물 충돌 처리
         [p1, p2].forEach(p => {
@@ -604,10 +696,19 @@ function gameLoop(timestamp) {
 
           let hitObstacle = false;
           // 장애물 충돌 판정
-          for (const obs of obstacles) {
+          for (let j = 0; j < obstacles.length; j++) {
+            const obs = obstacles[j];
             if (isCollidingRect(b, obs)) {
               // 파티클 생성
               for (let k = 0; k < 6; k++) particles.push(new Particle(b.x, b.y, b.color));
+              
+              obs.hp--; // 체력 감소
+              if (obs.hp <= 0) {
+                // 파괴 이펙트
+                for (let k = 0; k < 15; k++) particles.push(new Particle(obs.x + obs.width/2, obs.y + obs.height/2, obs.color));
+                obstacles.splice(j, 1);
+              }
+              
               bullets.splice(i, 1);
               hitObstacle = true;
               break;
@@ -624,11 +725,12 @@ function gameLoop(timestamp) {
               player.hp--;                // 체력 감소
               player.vx += b.vx * 0.4 * scale;    // 피격 시 넉백 효과 적용
               player.vy += b.vy * 0.4 * scale;
-              player.hitTimer = 10;       // 색상 반전 이펙트 활성화
-
+              player.hitTimer = 30;       // 피격 이펙트 지속
+              player.stunTimer = 30;      // 명중 시 0.5초 경직 (이속 대폭 감소)
+              
               // 파티클 생성
               for (let k = 0; k < 12; k++) particles.push(new Particle(b.x, b.y, b.color));
-
+              
               bullets.splice(i, 1);       // 충돌한 총알 제거
               break;
             }
@@ -643,6 +745,7 @@ function gameLoop(timestamp) {
       }
 
       // 4. 객체 렌더링 순서 (배경/장애물 -> 플레이어 -> 파티클 -> 총알 -> UI)
+      healingZones.forEach(hz => hz.draw(ctx));
       obstacles.forEach(obs => obs.draw(ctx));
       p1.draw(ctx);
       p2.draw(ctx);
