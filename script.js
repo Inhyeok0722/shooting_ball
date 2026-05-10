@@ -11,6 +11,7 @@ const GAME_STATE = {
 };
 let currentState = GAME_STATE.START; // 현재 게임 상태
 let winner = null;                    // 승리자 정보 저장
+let isSinglePlayer = false;           // 1인 플레이 모드 여부
 
 // 캔버스 엘리먼트 및 렌더링 컨텍스트 설정
 const canvas = document.getElementById('gameCanvas');
@@ -68,21 +69,10 @@ function getScale() {
    게임 화면의 각 상태에 따라 시각적인 요소를 그리는 함수들입니다.
 ========================================================================= */
 
-// 게임 시작 대기 화면 (Press Any Key 메시지 깜빡임)
+// 게임 시작 대기 화면
 function drawStartScreen() {
-  const blink = Math.floor(Date.now() / 500) % 2; // 0.5초 주기로 깜빡임 계산
   ctx.fillStyle = "black";
   ctx.fillRect(0, 0, canvas.width, canvas.height);
-
-  ctx.fillStyle = "white";
-  ctx.textAlign = "center";
-
-  if (blink) {
-    ctx.font = "60px Arial";
-    ctx.fillText("Press Any Key", canvas.width / 2, canvas.height / 2);
-  }
-  ctx.font = "20px Arial";
-  ctx.fillText("2 Player Shooting Game", canvas.width / 2, canvas.height / 2 + 50);
 }
 
 // 게임 종료 화면 (승리자 표시 및 재시작 안내)
@@ -119,9 +109,9 @@ function drawUI() {
   ctx.textAlign = "right";
   ctx.fillStyle = SETTINGS.NORMAL_FONT_COLOR;
   ctx.font = "bold 18px Arial";
-  ctx.fillText("P2 (Red)", canvas.width - 20, 30);
+  ctx.fillText(isSinglePlayer ? "P2 (CPU)" : "P2 (Red)", canvas.width - 20, 30);
   ctx.font = "14px Arial";
-  ctx.fillText("Move: I, J, K, L | Shoot: ; | Reload: P | Dash : Enter", canvas.width - 20, 55);
+  ctx.fillText(isSinglePlayer ? "CPU Managed" : "Move: I, J, K, L | Shoot: ; | Reload: P | Dash : Enter", canvas.width - 20, 55);
 
   ctx.font = "bold 16px Arial";
   ctx.fillStyle = p2.isReloading ? "orange" : SETTINGS.NORMAL_FONT_COLOR;
@@ -135,7 +125,7 @@ function resetGame() {
   p1.hp = SETTINGS.MAX_HP; p1.ammo = SETTINGS.MAX_AMMO; p1.isReloading = false;
   p1.dashCooldown = 0; p1.dashTimer = 0;
   p1.stunTimer = 0; p1.healTimer = 0;
-  
+
   p2.x = canvas.width * 0.9; p2.y = canvas.height * 0.4; // 화면 오른쪽에서 10% 지점, 위에서 40% 지점
   p2.vx = 0; p2.vy = 0;
   p2.hp = SETTINGS.MAX_HP; p2.ammo = SETTINGS.MAX_AMMO; p2.isReloading = false;
@@ -292,7 +282,7 @@ class Player extends GameObject {
     // 2026.04.29, 속도를 반응형으로 변경함
     let accelMult = this.isReloading ? SETTINGS.RELOAD_SPEED_MULTIPLIER : 1;
     let speedMult = this.isReloading ? SETTINGS.RELOAD_SPEED_MULTIPLIER : 1;
-    
+
     // 피격 경직 상태면 속도 대폭 감소 (30%)
     if (this.stunTimer > 0) {
       accelMult *= 0.3;
@@ -483,13 +473,13 @@ class Obstacle {
     ctx.globalAlpha = Math.max(0.2, this.hp / this.maxHp); // 체력에 따라 투명해짐
     ctx.fillStyle = this.color;
     ctx.fillRect(this.x, this.y, this.width, this.height);
-    
+
     // 남은 체력 게이지 (벽 중앙)
     ctx.fillStyle = "rgba(0,0,0,0.5)";
     ctx.fillRect(this.x + 5, this.y + this.height / 2 - 2, this.width - 10, 4);
     ctx.fillStyle = "white";
     ctx.fillRect(this.x + 5, this.y + this.height / 2 - 2, (this.width - 10) * (this.hp / this.maxHp), 4);
-    
+
     ctx.strokeStyle = "#444";
     ctx.lineWidth = 3;
     ctx.strokeRect(this.x, this.y, this.width, this.height);
@@ -520,14 +510,14 @@ class HealingZone {
     ctx.arc(this.x, this.y, this.radius, 0, Math.PI * 2);
     ctx.fill();
     ctx.closePath();
-    
+
     ctx.strokeStyle = "rgba(0, 200, 50, 0.5)";
     ctx.lineWidth = 2;
     ctx.beginPath();
     ctx.arc(this.x, this.y, this.radius, 0, Math.PI * 2);
     ctx.stroke();
     ctx.closePath();
-    
+
     // 중앙에 + 표시
     ctx.fillStyle = "rgba(0, 255, 100, 0.8)";
     ctx.font = `bold ${20 * getScale()}px Arial`;
@@ -591,9 +581,133 @@ const p1 = new Player(canvas.width * 0.1, canvas.height * 0.6, { r: 0, g: 0, b: 
 });
 
 // Player 2 설정 (빨간색, IJKL & ;, 수동재장전 P, 대시 Enter)
-const p2 = new Player(canvas.width * 0.9, canvas.height * 0.4, { r: 255, g: 0, b: 0 }, {
+let p2 = new Player(canvas.width * 0.9, canvas.height * 0.4, { r: 255, g: 0, b: 0 }, {
   up: 'i', down: 'k', left: 'j', right: 'l', shoot: ';', reload: 'p', dash: 'enter'
 });
+
+/* =========================================================================
+   [CPU AI 클래스]
+========================================================================= */
+class CPUPlayer extends Player {
+  constructor(x, y, color) {
+    super(x, y, color, { up: 'cpu_up', down: 'cpu_down', left: 'cpu_left', right: 'cpu_right', shoot: 'cpu_shoot', reload: 'cpu_reload', dash: 'cpu_dash' });
+  }
+
+  updateAI(target, bullets, obstacles, canvasWidth, canvasHeight) {
+    const dx = target.x - this.x;
+    const dy = target.y - this.y;
+    const dist = Math.hypot(dx, dy);
+
+    // 1. 타겟 조준
+    if (dist > 0) {
+      this.dir = { x: dx / dist, y: dy / dist };
+    }
+
+    const aiKeys = {};
+
+    // 2. 위험 감지 (날아오는 총알 회피)
+    if (this.dashCooldown <= 0) {
+      for (const b of bullets) {
+        if (b.owner === this) continue;
+        const bdx = this.x - b.x;
+        const bdy = this.y - b.y;
+        const bdist = Math.hypot(bdx, bdy);
+        if (bdist < 150) {
+          // 총알이 나를 향해 오는지 대략적으로 확인
+          const dot = (b.vx * bdx + b.vy * bdy) / bdist;
+          if (dot > 15) { // 내 쪽으로 빠르게 다가오면
+            aiKeys[this.controls.dash] = true;
+            break;
+          }
+        }
+      }
+    }
+
+    // 3. 전술적 이동 목표 설정
+    let targetX = target.x;
+    let targetY = target.y;
+    let moveMode = 'CHASE';
+
+    if (this.hp <= 2) {
+      // 체력이 낮으면 힐링존으로
+      moveMode = 'HEAL';
+      targetX = canvasWidth * 0.5;
+      targetY = canvasHeight * 0.5;
+    } else if (this.ammo === 0) {
+      // 탄약이 없으면 가장 가까운 장애물 뒤로 숨기
+      moveMode = 'HIDE';
+      let bestObstacle = null;
+      let minDist = Infinity;
+      obstacles.forEach(obs => {
+        const obsCX = obs.x + obs.width / 2;
+        const obsCY = obs.y + obs.height / 2;
+        const d = Math.hypot(this.x - obsCX, this.y - obsCY);
+        if (d < minDist) {
+          minDist = d;
+          bestObstacle = obs;
+        }
+      });
+
+      if (bestObstacle) {
+        const obsCX = bestObstacle.x + bestObstacle.width / 2;
+        const obsCY = bestObstacle.y + bestObstacle.height / 2;
+        // 타겟의 반대 방향으로 장애물 너머에 위치
+        const hideDirX = obsCX - target.x;
+        const hideDirY = obsCY - target.y;
+        const hideLen = Math.hypot(hideDirX, hideDirY);
+        targetX = obsCX + (hideDirX / hideLen) * 50;
+        targetY = obsCY + (hideDirY / hideLen) * 50;
+        this.startReload();
+      }
+    }
+
+    // 4. 실제 이동 제어
+    const tdx = targetX - this.x;
+    const tdy = targetY - this.y;
+    const tdist = Math.hypot(tdx, tdy);
+
+    if (moveMode === 'CHASE') {
+      if (tdist > 450) {
+        // 접근
+        if (tdx > 20) aiKeys[this.controls.right] = true;
+        if (tdx < -20) aiKeys[this.controls.left] = true;
+        if (tdy > 20) aiKeys[this.controls.down] = true;
+        if (tdy < -20) aiKeys[this.controls.up] = true;
+      } else if (tdist < 250) {
+        // 후퇴
+        if (tdx > 0) aiKeys[this.controls.left] = true;
+        if (tdx < 0) aiKeys[this.controls.right] = true;
+        if (tdy > 0) aiKeys[this.controls.up] = true;
+        if (tdy < 0) aiKeys[this.controls.down] = true;
+      } else {
+        // 횡이동 (플레이어 주변 맴돌기)
+        if (Math.sin(Date.now() / 400) > 0) {
+          aiKeys[this.controls.up] = true;
+        } else {
+          aiKeys[this.controls.down] = true;
+        }
+      }
+    } else {
+      // HEAL 또는 HIDE 상태일 때는 목적지로 직진
+      if (tdx > 10) aiKeys[this.controls.right] = true;
+      if (tdx < -10) aiKeys[this.controls.left] = true;
+      if (tdy > 10) aiKeys[this.controls.down] = true;
+      if (tdy < -10) aiKeys[this.controls.up] = true;
+    }
+
+    // 5. 사격 결정
+    if (moveMode === 'CHASE' && dist < 700 && !this.isReloading) {
+      // 조준 보정 (약간의 오차 고려 가능하나 여기선 정확히)
+      if (Math.random() < 0.06) {
+        this.shoot(bullets);
+      }
+    }
+
+    this.handleInput(aiKeys);
+  }
+}
+
+
 
 /* =========================================================================
    [메인 게임 루프]
@@ -634,14 +748,14 @@ function gameLoop(timestamp) {
               isHealing = true;
             }
           });
-          
+
           if (isHealing && p.hp < SETTINGS.MAX_HP) {
             p.healTimer++;
             if (p.healTimer >= 120) { // 약 2초 머물면 1 회복
               p.hp++;
               p.healTimer = 0;
               // 힐링 이펙트
-              for(let i=0; i<8; i++) particles.push(new Particle(p.x, p.y, {r:0, g:255, b:100}));
+              for (let i = 0; i < 8; i++) particles.push(new Particle(p.x, p.y, { r: 0, g: 255, b: 100 }));
             }
           } else {
             p.healTimer = 0; // 벗어나면 초기화
@@ -651,7 +765,11 @@ function gameLoop(timestamp) {
         // 플레이어 이동 업데이트 및 장애물 충돌 처리
         [p1, p2].forEach(p => {
           let oldX = p.x; let oldY = p.y;
-          p.handleInput(keys);
+          if (isSinglePlayer && p === p2) {
+            p2.updateAI(p1, bullets, obstacles, canvas.width, canvas.height);
+          } else {
+            p.handleInput(keys);
+          }
           p.update(canvas.width, canvas.height);
 
           obstacles.forEach(obs => {
@@ -677,11 +795,11 @@ function gameLoop(timestamp) {
 
         // 공격 처리 (키를 누르고 있으면 shoot 메서드 반복 호출)
         if (keys[p1.controls.shoot]) p1.shoot(bullets);
-        if (keys[p2.controls.shoot]) p2.shoot(bullets);
+        if (!isSinglePlayer && keys[p2.controls.shoot]) p2.shoot(bullets);
 
         // 수동 재장전 입력 처리
         if (keys[p1.controls.reload]) p1.startReload();
-        if (keys[p2.controls.reload]) p2.startReload();
+        if (!isSinglePlayer && keys[p2.controls.reload]) p2.startReload();
 
         // 총알 물리 업데이트 및 충돌 검사
         for (let i = bullets.length - 1; i >= 0; i--) {
@@ -701,14 +819,14 @@ function gameLoop(timestamp) {
             if (isCollidingRect(b, obs)) {
               // 파티클 생성
               for (let k = 0; k < 6; k++) particles.push(new Particle(b.x, b.y, b.color));
-              
+
               obs.hp--; // 체력 감소
               if (obs.hp <= 0) {
                 // 파괴 이펙트
-                for (let k = 0; k < 15; k++) particles.push(new Particle(obs.x + obs.width/2, obs.y + obs.height/2, obs.color));
+                for (let k = 0; k < 15; k++) particles.push(new Particle(obs.x + obs.width / 2, obs.y + obs.height / 2, obs.color));
                 obstacles.splice(j, 1);
               }
-              
+
               bullets.splice(i, 1);
               hitObstacle = true;
               break;
@@ -727,10 +845,10 @@ function gameLoop(timestamp) {
               player.vy += b.vy * 0.4 * scale;
               player.hitTimer = 30;       // 피격 이펙트 지속
               player.stunTimer = 30;      // 명중 시 0.5초 경직 (이속 대폭 감소)
-              
+
               // 파티클 생성
               for (let k = 0; k < 12; k++) particles.push(new Particle(b.x, b.y, b.color));
-              
+
               bullets.splice(i, 1);       // 충돌한 총알 제거
               break;
             }
@@ -769,20 +887,32 @@ function gameLoop(timestamp) {
    키보드 입력을 감지하고 게임 상태를 전환합니다.
 ========================================================================= */
 
+// UI 버튼 이벤트 등록
+document.getElementById('btn-1p').addEventListener('click', () => {
+  isSinglePlayer = true;
+  p2 = new CPUPlayer(canvas.width * 0.9, canvas.height * 0.4, { r: 255, g: 0, b: 0 });
+  document.getElementById('startMenu').classList.add('hidden');
+  currentState = GAME_STATE.PLAYING;
+});
+
+document.getElementById('btn-2p').addEventListener('click', () => {
+  isSinglePlayer = false;
+  p2 = new Player(canvas.width * 0.9, canvas.height * 0.4, { r: 255, g: 0, b: 0 }, {
+    up: 'i', down: 'k', left: 'j', right: 'l', shoot: ';', reload: 'p', dash: 'enter'
+  });
+  document.getElementById('startMenu').classList.add('hidden');
+  currentState = GAME_STATE.PLAYING;
+});
+
 // 키를 눌렀을 때 실행
 window.addEventListener('keydown', e => {
   const key = e.key.toLowerCase();
   keys[key] = true;
 
-  // 어떤 키든 누르면 대기 화면에서 시작
-  if (currentState === GAME_STATE.START) {
-    currentState = GAME_STATE.PLAYING;
-  }
-
-  // 종료 화면에서 R을 누르면 게임 리셋
+  // 종료 화면에서 R을 누르면 게임 리셋 (시작 화면으로 이동)
   if (currentState === GAME_STATE.GAMEOVER && key === 'r') {
     resetGame();
-    currentState = GAME_STATE.PLAYING;
+    document.getElementById('startMenu').classList.remove('hidden');
   }
 });
 
