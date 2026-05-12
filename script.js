@@ -27,7 +27,7 @@ const SETTINGS = {
   MAX_HP: 5,
   MAX_AMMO: 10,
   RELOAD_TIME: 150,           // 단위: 60fps 기준 프레임
-  NORMAL_FONT_COLOR: 'rgba(0, 0, 0, 0.6)',
+  NORMAL_FONT_COLOR: 'rgba(255, 255, 255, 0.85)',
   DASH_COOLDOWN: 180,         // 단위: 60fps 기준 프레임
   DASH_SPEED_MULTIPLIER: 3,
   DASH_DURATION: 12           // 단위: 60fps 기준 프레임
@@ -528,7 +528,7 @@ class Bullet extends GameObject {
     const scale  = getScale();
     const angle  = Math.atan2(this.vy, this.vx);
     const r      = this.radius * scale;
-    const alpha  = Math.min(1, this.life / 20); // 수명 끝날수록 투명해짐
+    const alpha  = Math.min(1, this.life / 20);
     const c      = this.color;
 
     ctx.save();
@@ -900,8 +900,8 @@ class CPUPlayer extends Player {
     ctx.strokeStyle = dark;
     ctx.lineWidth = r * 0.07;
     ctx.beginPath();
-    ctx.moveTo(-r*0.0, -r*0.32);
-    ctx.lineTo(-r*0.0, r*0.32);
+    ctx.moveTo(0, -r*0.32);
+    ctx.lineTo(0, r*0.32);
     ctx.stroke();
 
     // AI 글로우 링
@@ -967,11 +967,11 @@ function gameLoop(timestamp) {
     const gridSize = 48;
     ctx.strokeStyle = 'rgba(255,255,255,0.04)';
     ctx.lineWidth = 1;
-    for (let x = 0; x < canvas.width; x += gridSize) {
-      ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, canvas.height); ctx.stroke();
+    for (let gx = 0; gx < canvas.width; gx += gridSize) {
+      ctx.beginPath(); ctx.moveTo(gx, 0); ctx.lineTo(gx, canvas.height); ctx.stroke();
     }
-    for (let y = 0; y < canvas.height; y += gridSize) {
-      ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(canvas.width, y); ctx.stroke();
+    for (let gy = 0; gy < canvas.height; gy += gridSize) {
+      ctx.beginPath(); ctx.moveTo(0, gy); ctx.lineTo(canvas.width, gy); ctx.stroke();
     }
 
     if (currentState === GAME_STATE.PLAYING) {
